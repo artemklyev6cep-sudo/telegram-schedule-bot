@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import asyncio
+from aiohttp import web
 
 # ========== НАСТРОЙКИ ДЛЯ RENDER ==========
 if sys.platform == "win32":
@@ -334,46 +335,55 @@ async def handle_other_messages(message: types.Message):
     elif text in ["привет", "hello", "hi", "бот"]:
         await start_command(message)
 
+# ========== МИНИМАЛЬНЫЙ ВЕБ-СЕРВЕР ДЛЯ RENDER ==========
+async def health_check(request):
+    """Простая проверка здоровья для Render"""
+    return web.Response(text="✅ Telegram бот работает!")
+
+async def start_web_server():
+    """Запускаем простой HTTP-сервер на порту 8080"""
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)
+    
+    # Получаем порт из переменных окружения Render (или используем 8080)
+    port = int(os.environ.get("PORT", 8080))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logger.info(f"🌐 Веб-сервер запущен на порту {port}")
+    return runner
+
 # ========== ЗАПУСК ДЛЯ RENDER ==========
 
-async def on_startup(_):
-    """Функция запуска для Render"""
-    logger.info("🚀 Бот запускается на Render...")
-    logger.info(f"👥 ID группы: {GROUP_ID}")
-    logger.info(f"📅 Референсная неделя: {REFERENCE_WEEK_START}")
-    logger.info("✅ Бот успешно запущен и готов к работе!")
-    print("=" * 50)
-    print("🤖 Telegram Schedule Bot")
-    print("🚀 Успешно запущен на Render.com")
-    print("📞 Напишите /start вашему боту")
-    print("=" * 50)
+async def main():
+    """Основная функция запуска"""
+    logger.info("=" * 50)
+    logger.info("🚀 Запуск Telegram бота расписания")
+    logger.info("📅 Референсная неделя: %s", REFERENCE_WEEK_START)
+    logger.info("👥 ID группы: %s", GROUP_ID)
+    
+    # Проверка токена
+    if TOKEN == '8512277521:AAE_s5IONdbZzgMzMU3LFlQqRAa00qUHpiQ':
+        logger.warning("⚠️  ВНИМАНИЕ: Используется тестовый токен!")
+        logger.warning("⚠️  Для продакшена установите переменную BOT_TOKEN на Render")
+    
+    logger.info("✅ Все проверки пройдены")
+    logger.info("=" * 50)
+    
+    # Запускаем веб-сервер (чтобы Render видел открытый порт)
+    web_runner = await start_web_server()
+    
+    # Запускаем Telegram бота
+    logger.info("🤖 Запуск Telegram бота...")
+    await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
     try:
-        logger.info("=" * 50)
-        logger.info("🚀 Запуск Telegram бота расписания")
-        logger.info("📅 Референсная неделя: %s", REFERENCE_WEEK_START)
-        logger.info("👥 ID группы: %s", GROUP_ID)
-        
-        # Проверка токена
-        if TOKEN == '8512277521:AAE_s5IONdbZzgMzMU3LFlQqRAa00qUHpiQ':
-            logger.warning("⚠️  ВНИМАНИЕ: Используется тестовый токен!")
-            logger.warning("⚠️  Для продакшена установите переменную BOT_TOKEN на Render")
-        
-        logger.info("✅ Все проверки пройдены")
-        logger.info("=" * 50)
-        
-        # Запуск бота для aiogram 3.x
-        dp.run_polling(
-            bot,
-            skip_updates=True,
-            on_startup=on_startup
-        )
-        
+        # Запускаем основную асинхронную функцию
+        asyncio.run(main())
     except Exception as e:
         logger.error(f"❌ Критическая ошибка запуска бота: {e}", exc_info=True)
         print(f"❌ Ошибка: {e}")
         sys.exit(1)
-
-
-

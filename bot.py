@@ -31,7 +31,7 @@ if TOKEN == '8512277521:AAHYP10fWioTGeMQ30OUYOLlB1i-AMMmJT4':
     logger.warning("⚠️ Используется тестовый токен! Для продакшена установите BOT_TOKEN в переменные окружения")
 
 bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()
 
 # Убедитесь, что это правильный ID группы
 GROUP_ID = 3808
@@ -369,4 +369,5 @@ if __name__ == "__main__":
         sys.exit(1)
 
  
+
 

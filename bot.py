@@ -9,26 +9,27 @@ import os
 import sys
 import asyncio
 
-# ========== НАСТРОЙКИ ДЛЯ RENDER ==========
+# ========== НАСТРОЙКИ ДЛЯ BOTHOST ==========
 # Убедимся, что используется правильный event loop
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-# Настройка логирования для Render
+# Настройка логирования для Bothost
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(sys.stdout)  # Вывод в консоль Render
+        logging.StreamHandler(sys.stdout)  # Вывод в консоль Bothost
     ]
 )
 logger = logging.getLogger(__name__)
-# ==========================================
+# ===========================================
 
 # Безопасное получение токена из переменных окружения
-TOKEN = os.getenv('BOT_TOKEN', '8512277521:AAE_s5IONdbZzgMzMU3LFlQqRAa00qUHpiQ')
-if TOKEN == '8512277521:AAE_s5IONdbZzgMzMU3LFlQqRAa00qUHpiQ':
-    logger.warning("⚠️ Используется тестовый токен! Для продакшена установите BOT_TOKEN в переменные окружения")
+TOKEN = os.getenv('BOT_TOKEN')
+if not TOKEN:
+    logger.error("❌ Не найден BOT_TOKEN в переменных окружения!")
+    raise ValueError("Установите BOT_TOKEN в настройках Bothost")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
@@ -199,7 +200,7 @@ async def schedule_command(message: types.Message):
         schedule, week_type = fetch_schedule_table()
         week_type_name = "Знаменатель" if week_type == '2' else 'Числитель'
         text = f"<b>Расписание на эту неделю ({week_type_name}):</b>\n\n"
-        for day in DAYS_ORDER[:-1]:
+        for day in DAYS_ORDER[:-1]:  # Исключаем воскресенье
             text += format_day_schedule(day, schedule) + "\n"
         await message.reply(text, parse_mode="HTML")
     except Exception as e:
@@ -328,41 +329,56 @@ async def handle_other_messages(message: types.Message):
     elif text in ["привет", "hello", "hi", "бот"]:
         await start_command(message)
 
-# ========== ЗАПУСК ДЛЯ RENDER ==========
 async def on_startup(_):
-    """Функция запуска для Render"""
-    logger.info("🚀 Бот запускается на Render...")
+    """Функция запуска для Bothost"""
+    logger.info("🚀 Бот запускается на Bothost.ru...")
     logger.info(f"👥 ID группы: {GROUP_ID}")
     logger.info(f"📅 Референсная неделя: {REFERENCE_WEEK_START}")
     logger.info("✅ Бот успешно запущен и готов к работе!")
     print("=" * 50)
     print("🤖 Telegram Schedule Bot")
-    print("🚀 Успешно запущен на Render.com")
+    print("🚀 Успешно запущен на Bothost.ru")
     print("📞 Напишите /start вашему боту")
     print("=" * 50)
 
+# ========== ЗАПУСК ДЛЯ BOTHOST ==========
 if __name__ == "__main__":
-    # Импортируем asyncio для правильного запуска
-    import asyncio
-    
-    # Проверка для Windows (у вас уже есть, но оставим для локального запуска)
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
-    # Получаем текущую event loop и запускаем поллинг
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
     try:
-        logger.info("🤖 Запуск бота на Bothost.ru...")
-        # Запускаем поллинг в рамках созданной event loop
-        loop.run_until_complete(
-            executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
-        )
-    except KeyboardInterrupt:
-        logger.info("⏹️ Остановка бота...")
-    finally:
-        loop.close()
+        logger.info("=" * 50)
+        logger.info("🚀 Запуск Telegram бота расписания")
+        logger.info("📅 Референсная неделя: %s", REFERENCE_WEEK_START)
+        logger.info("👥 ID группы: %s", GROUP_ID)
+        
+        # Проверка токена
+        if not TOKEN:
+            logger.error("❌ BOT_TOKEN не установлен!")
+            raise ValueError("Установите BOT_TOKEN в переменных окружения Bothost")
+        
+        logger.info("✅ Все проверки пройдены")
+        logger.info("=" * 50)
+        
+        # Запуск бота (специально для Bothost)
+        import asyncio
+        
+        # Получаем текущую event loop и запускаем поллинг
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            logger.info("🤖 Запуск бота на Bothost.ru...")
+            # Запускаем поллинг в рамках созданной event loop
+            loop.run_until_complete(
+                executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+            )
+        except KeyboardInterrupt:
+            logger.info("⏹️ Остановка бота...")
+        finally:
+            loop.close()
+        
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка запуска бота: {e}", exc_info=True)
+        print(f"❌ Ошибка: {e}")
+        sys.exit(1)
 
 
 

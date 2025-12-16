@@ -358,7 +358,8 @@ if __name__ == "__main__":
         
         # Запуск бота
         executor.start_polling(
-            dp, 
+        dp.run_polling(
+            bot,
             skip_updates=True,
             on_startup=on_startup
         )
@@ -366,4 +367,5 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"❌ Критическая ошибка запуска бота: {e}", exc_info=True)
         print(f"❌ Ошибка: {e}")
+
         sys.exit(1)

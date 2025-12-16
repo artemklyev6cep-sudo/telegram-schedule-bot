@@ -1,5 +1,6 @@
 aiogram==2.25.1
 requests==2.31.0
 beautifulsoup4==4.12.2
-lxml==4.9.3
+lxml==4.12.5
+aiohttp==3.9.3
 python-dotenv==1.0.0

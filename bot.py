@@ -342,30 +342,27 @@ async def on_startup(_):
     print("=" * 50)
 
 if __name__ == "__main__":
+    # Импортируем asyncio для правильного запуска
+    import asyncio
+    
+    # Проверка для Windows (у вас уже есть, но оставим для локального запуска)
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    
+    # Получаем текущую event loop и запускаем поллинг
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
     try:
-        logger.info("=" * 50)
-        logger.info("🚀 Запуск Telegram бота расписания")
-        logger.info("📅 Референсная неделя: %s", REFERENCE_WEEK_START)
-        logger.info("👥 ID группы: %s", GROUP_ID)
-        
-        # Проверка токена
-        if TOKEN == '8512277521:AAHYP10fWioTGeMQ30OUYOLlB1i-AMMmJT4':
-            logger.warning("⚠️  ВНИМАНИЕ: Используется тестовый токен!")
-            logger.warning("⚠️  Для продакшена установите переменную BOT_TOKEN на Render")
-        
-        logger.info("✅ Все проверки пройдены")
-        logger.info("=" * 50)
-        
-        # Запуск бота
-        executor.start_polling(
-            dp, 
-            skip_updates=True,
-            on_startup=on_startup
+        logger.info("🤖 Запуск бота на Bothost.ru...")
+        # Запускаем поллинг в рамках созданной event loop
+        loop.run_until_complete(
+            executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
         )
-        
-    except Exception as e:
-        logger.error(f"❌ Критическая ошибка запуска бота: {e}", exc_info=True)
-        print(f"❌ Ошибка: {e}")
-        sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info("⏹️ Остановка бота...")
+    finally:
+        loop.close()
+
 
 

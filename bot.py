@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 # ==========================================
 
 # Безопасное получение токена из переменных окружения
-TOKEN = os.getenv('BOT_TOKEN', '8512277521:AAHYP10fWioTGeMQ30OUYOLlB1i-AMMmJT4')
-if TOKEN == '8512277521:AAHYP10fWioTGeMQ30OUYOLlB1i-AMMmJT4':
+TOKEN = os.getenv('BOT_TOKEN', '8512277521:AAELR9m3JPCDGibOB3m2RRDBAuhjepHcTf0')
+if TOKEN == '8512277521:AAELR9m3JPCDGibOB3m2RRDBAuhjepHcTf0':
     logger.warning("⚠️ Используется тестовый токен! Для продакшена установите BOT_TOKEN в переменные окружения")
 
 # Инициализация aiogram 3.x
@@ -340,4 +340,5 @@ if __name__ == "__main__":
         
     except Exception as e:
         logger.error(f"❌ Ошибка запуска: {e}")
+
 

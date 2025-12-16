@@ -2,7 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import date, timedelta, datetime
 from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
+# УДАЛИЛИ: from aiogram.utils import executor  ← ЭТА СТРОКА БОЛЬШЕ НЕ НУЖНА
 import random
 import logging
 import os
@@ -356,8 +356,7 @@ if __name__ == "__main__":
         logger.info("✅ Все проверки пройдены")
         logger.info("=" * 50)
         
-        # Запуск бота
-        executor.start_polling(
+        # Запуск бота для aiogram 3.x
         dp.run_polling(
             bot,
             skip_updates=True,
@@ -367,5 +366,7 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"❌ Критическая ошибка запуска бота: {e}", exc_info=True)
         print(f"❌ Ошибка: {e}")
-
         sys.exit(1)
+
+ 
+

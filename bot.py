@@ -1,5 +1,5 @@
 import requests
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.filters import Command
 import random
@@ -7,7 +7,6 @@ import logging
 import os
 import sys
 import asyncio
-import re
 
 # ========== НАСТРОЙКИ ДЛЯ RENDER ==========
 if sys.platform == "win32":
@@ -45,66 +44,22 @@ def get_week_type(check_date=None):
     return "2" if delta_weeks % 2 == 0 else "1"  
 
 def fetch_schedule_table(for_date=None):
-    """Упрощенный парсинг без lxml"""
+    """Упрощенная функция для теста - возвращает тестовое расписание"""
     if for_date is None:
         for_date = date.today()
+    
     week_type = get_week_type(for_date)
-    URL = f"http://r.sf-misis.ru/group/{GROUP_ID}/{week_type}"
     
-    try:
-        resp = requests.get(URL, timeout=10)
-        resp.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Ошибка при запросе расписания: {e}")
-        return {}, week_type
-    
-    html_content = resp.text
-    schedule = {day: [] for day in DAYS_ORDER}
-    
-    # Упрощенный парсинг с помощью регулярных выражений
-    # Ищем таблицу расписания
-    table_match = re.search(r'<table[^>]*id="schedule-table"[^>]*>(.*?)</table>', html_content, re.DOTALL)
-    
-    if not table_match:
-        return schedule, week_type
-    
-    table_html = table_match.group(1)
-    
-    # Простой парсинг строк таблицы
-    # Это упрощенная версия - в реальном боте нужно доработать
-    # под вашу конкретную структуру таблицы
-    
-    # Пример простого извлечения данных:
-    current_day = None
-    
-    # Разбиваем на строки
-    rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, re.DOTALL)
-    
-    for row in rows[1:]:  # Пропускаем заголовок
-        # Проверяем день недели
-        day_match = re.search(r'<th[^>]*class="table-weekdays"[^>]*>(.*?)</th>', row)
-        if day_match:
-            day_name = day_match.group(1).strip()
-            if day_name in DAYS_ORDER:
-                current_day = day_name
-                continue
-        
-        if not current_day:
-            continue
-        
-        # Ищем занятия в строке
-        # Это нужно адаптировать под вашу конкретную структуру таблицы
-        lessons = re.findall(r'<td[^>]*class="[^"]*table-single[^"]*"[^>]*>(.*?)</td>', row, re.DOTALL)
-        lessons += re.findall(r'<td[^>]*class="[^"]*table-subgroups[^"]*"[^>]*>(.*?)</td>', row, re.DOTALL)
-        
-        for lesson_html in lessons:
-            # Извлекаем предмет
-            subject_match = re.search(r'<div[^>]*class="table-subject"[^>]*>(.*?)</div>', lesson_html, re.DOTALL)
-            if subject_match:
-                subject = re.sub(r'<[^>]+>', '', subject_match.group(1)).strip()
-                if subject:
-                    # Упрощенная запись
-                    schedule[current_day].append(f"- {subject}")
+    # ТЕСТОВОЕ РАСПИСАНИЕ - замените на реальный парсинг позже
+    schedule = {
+        "Понедельник": ["- Математика | 9:00 | ауд. 101 | Иванов"],
+        "Вторник": ["- Физика | 10:30 | ауд. 202 | Петров"],
+        "Среда": ["- Программирование | 13:00 | ауд. 303 | Сидоров"],
+        "Четверг": ["- Английский | 11:00 | ауд. 404 | Смирнова"],
+        "Пятница": ["- Физкультура | 15:00 | спортзал | Кузнецов"],
+        "Суббота": [],
+        "Воскресенье": []
+    }
     
     return schedule, week_type
 
@@ -188,15 +143,28 @@ async def start_command(message: types.Message):
         parse_mode="HTML"
     )
 
+@router.message()
+async def handle_other_messages(message: types.Message):
+    text = message.text.strip().lower()
+    if text in ["привет", "hello", "hi", "бот"]:
+        await start_command(message)
+    elif "сессия" in text or "экзамен" in text:
+        await session_command(message)
+    else:
+        await message.reply("Напишите /help для списка команд")
+
 # ========== ЗАПУСК ==========
 
 if __name__ == "__main__":
     try:
-        logger.info("🚀 Запуск бота...")
+        logger.info("🚀 Бот запускается...")
+        logger.info(f"👥 ID группы: {GROUP_ID}")
+        logger.info(f"📅 Референсная неделя: {REFERENCE_WEEK_START}")
+        
         dp.run_polling(bot, skip_updates=True)
+        
     except Exception as e:
         logger.error(f"❌ Ошибка запуска: {e}")
-
 
 
 

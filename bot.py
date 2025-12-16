@@ -1,17 +1,35 @@
 import requests
 from bs4 import BeautifulSoup
-from datetime import date, timedelta, datetime  # ← ДОБАВИЛ datetime
+from datetime import date, timedelta, datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
 import random
 import logging
 import os
+import sys
+import asyncio
 
-# Включим логирование для отладки
-logging.basicConfig(level=logging.INFO)
+# ========== НАСТРОЙКИ ДЛЯ RENDER ==========
+# Убедимся, что используется правильный event loop
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+# Настройка логирования для Render
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)  # Вывод в консоль Render
+    ]
+)
+logger = logging.getLogger(__name__)
+# ==========================================
 
 # Безопасное получение токена из переменных окружения
 TOKEN = os.getenv('BOT_TOKEN', '8512277521:AAHYP10fWioTGeMQ30OUYOLlB1i-AMMmJT4')
+if TOKEN == '8512277521:AAHYP10fWioTGeMQ30OUYOLlB1i-AMMmJT4':
+    logger.warning("⚠️ Используется тестовый токен! Для продакшена установите BOT_TOKEN в переменные окружения")
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
@@ -37,7 +55,7 @@ def fetch_schedule_table(for_date=None):
         resp = requests.get(URL, timeout=10)
         resp.raise_for_status()
     except requests.exceptions.RequestException as e:
-        logging.error(f"Ошибка при запросе расписания: {e}")
+        logger.error(f"Ошибка при запросе расписания: {e}")
         return {}, week_type
     
     soup = BeautifulSoup(resp.text, "lxml")
@@ -53,12 +71,10 @@ def fetch_schedule_table(for_date=None):
     time_cells = header_row.find_all("th")[1:]  # Пропускаем первый th с днями недели
     
     for th in time_cells:
-        # Ищем время в разных возможных местах
         time_div = th.find("div", class_="table-time-2")
         if time_div:
             times.append(time_div.get_text(strip=True))
         else:
-            # Если нет div с классом, берем текст из th
             time_text = th.get_text(strip=True)
             if time_text and any(char.isdigit() for char in time_text):
                 times.append(time_text)
@@ -67,7 +83,6 @@ def fetch_schedule_table(for_date=None):
 
     # Проходим по всем строкам таблицы
     for row in table.find_all("tr")[1:]:
-        # Определяем день недели для строки
         day_th = row.find("th", class_="table-weekdays")
         current_day = None
         if day_th:
@@ -76,24 +91,17 @@ def fetch_schedule_table(for_date=None):
                 current_day = day_name
         
         if not current_day:
-            # Если в этой строке нет нового дня, используем предыдущий
             continue
 
-        # Собираем все ячейки с занятиями
         cells = row.find_all("td")
         
-        # Проходим по каждой ячейке (каждой паре)
         for cell_index, cell in enumerate(cells):
-            # Пропускаем если вышли за пределы массива времен
             if cell_index >= len(times):
                 continue
                 
             current_time = times[cell_index] if cell_index < len(times) else ""
-            
-            # Проверяем тип ячейки
             cell_classes = cell.get("class", [])
             
-            # Если ячейка пустая (нет занятий)
             if not cell.get_text(strip=True):
                 continue
             
@@ -116,7 +124,6 @@ def fetch_schedule_table(for_date=None):
             
             # Занятия с подгруппами
             elif "table-subgroups" in cell_classes:
-                # Собираем все подгруппы
                 subgroups = cell.find_all("div", class_="table-subgroup-item")
                 
                 for subgroup in subgroups:
@@ -126,11 +133,9 @@ def fetch_schedule_table(for_date=None):
                     room = subgroup.find("div", class_="table-room")
                     
                     if subject and subject.get_text(strip=True):
-                        # Определяем номер подгруппы
                         subgroup_num = ""
                         if sg_name and sg_name.get_text(strip=True):
                             sg_text = sg_name.get_text(strip=True)
-                            # Извлекаем номер подгруппы из текста
                             if "подгруппа" in sg_text.lower():
                                 subgroup_num = sg_text
                             elif any(str(i) in sg_text for i in range(1, 10)):
@@ -152,7 +157,6 @@ def fetch_schedule_table(for_date=None):
             
             # Если ячейка содержит занятия, но не имеет специального класса
             elif cell.get_text(strip=True):
-                # Пробуем найти элементы как в обычном занятии
                 subject = cell.find("div", class_="table-subject") or cell.find("span", class_="table-subject")
                 teacher = cell.find("div", class_="table-teacher") or cell.find("span", class_="table-teacher")
                 room = cell.find("div", class_="table-room") or cell.find("span", class_="table-room")
@@ -168,7 +172,7 @@ def fetch_schedule_table(for_date=None):
                     
                     schedule[current_day].append(lesson_text)
     
-    # Удаляем дубликаты и сортируем по времени
+    # Удаляем дубликаты
     for day in DAYS_ORDER:
         unique_lessons = []
         seen = set()
@@ -195,12 +199,12 @@ async def schedule_command(message: types.Message):
         schedule, week_type = fetch_schedule_table()
         week_type_name = "Знаменатель" if week_type == '2' else 'Числитель'
         text = f"<b>Расписание на эту неделю ({week_type_name}):</b>\n\n"
-        for day in DAYS_ORDER[:-1]:  # Понедельник–Суббота
+        for day in DAYS_ORDER[:-1]:
             text += format_day_schedule(day, schedule) + "\n"
         await message.reply(text, parse_mode="HTML")
     except Exception as e:
-        logging.error(f"Ошибка в schedule_command: {e}")
-        await message.reply("❌ Ошибка при получении расписания. Попробуйте позже.")
+        logger.error(f"Ошибка в schedule_command: {e}")
+        await message.reply("❌ Ошибка при получении расписания.")
 
 @dp.message_handler(commands=["today"])
 async def today_command(message: types.Message):
@@ -212,14 +216,14 @@ async def today_command(message: types.Message):
         text += format_day_schedule(today_name, schedule)
         await message.reply(text, parse_mode="HTML")
     except Exception as e:
-        logging.error(f"Ошибка в today_command: {e}")
+        logger.error(f"Ошибка в today_command: {e}")
         await message.reply("❌ Ошибка при получении расписания.")
 
 @dp.message_handler(commands=["tomorrow"])
 async def tomorrow_command(message: types.Message):
     try:
         tomorrow = date.today() + timedelta(days=1)
-        if tomorrow.weekday() >= 6:  # Воскресенье
+        if tomorrow.weekday() >= 6:
             text = "🎉 Завтра занятий нет (воскресенье)."
         else:
             schedule, week_type = fetch_schedule_table(for_date=tomorrow)
@@ -229,34 +233,25 @@ async def tomorrow_command(message: types.Message):
             text += format_day_schedule(tomorrow_name, schedule)
         await message.reply(text, parse_mode="HTML")
     except Exception as e:
-        logging.error(f"Ошибка в tomorrow_command: {e}")
+        logger.error(f"Ошибка в tomorrow_command: {e}")
         await message.reply("❌ Ошибка при получении расписания.")
 
 @dp.message_handler(commands=["day"])
 async def day_command(message: types.Message):
-    """Команда для получения расписания на конкретный день"""
     try:
-        # Получаем аргумент команды (день недели)
         args = message.get_args().strip().lower()
         
         if not args:
             await message.reply("Укажите день недели после команды /day\nНапример: /day понедельник")
             return
         
-        # Сопоставляем ввод с днями недели
         day_mapping = {
-            "понедельник": "Понедельник",
-            "пн": "Понедельник",
-            "вторник": "Вторник", 
-            "вт": "Вторник",
-            "среда": "Среда",
-            "ср": "Среда",
-            "четверг": "Четверг",
-            "чт": "Четверг",
-            "пятница": "Пятница",
-            "пт": "Пятница",
-            "суббота": "Суббота",
-            "сб": "Суббота"
+            "понедельник": "Понедельник", "пн": "Понедельник",
+            "вторник": "Вторник", "вт": "Вторник",
+            "среда": "Среда", "ср": "Среда",
+            "четверг": "Четверг", "чт": "Четверг",
+            "пятница": "Пятница", "пт": "Пятница",
+            "суббота": "Суббота", "сб": "Суббота"
         }
         
         if args not in day_mapping:
@@ -270,9 +265,8 @@ async def day_command(message: types.Message):
         text = f"<b>Расписание на {day_name.lower()} ({week_type_name}):</b>\n\n"
         text += format_day_schedule(day_name, schedule)
         await message.reply(text, parse_mode="HTML")
-        
     except Exception as e:
-        logging.error(f"Ошибка в day_command: {e}")
+        logger.error(f"Ошибка в day_command: {e}")
         await message.reply("❌ Ошибка при получении расписания.")
 
 @dp.message_handler(commands=["session"])
@@ -283,13 +277,12 @@ async def session_command(message: types.Message):
         "🤔 Отчислен!",
         "📚 Учись!",
         "🍀 Готовь подарки Некрасовой!",
-        ]
+    ]
     answer = random.choice(answers)
     await message.reply(f"🎓 Прогноз на сессию:\n\n{answer}")
 
 @dp.message_handler(commands=["start", "help"])
 async def start_command(message: types.Message):
-
     await message.reply(
         "📚 <b>Бот-расписание МИСИС</b>\n\n"
         "Доступные команды:\n"
@@ -297,31 +290,22 @@ async def start_command(message: types.Message):
         "/today — на сегодня\n"
         "/tomorrow — на завтра\n"
         "/day [день] — на конкретный день\n"
-        "  (например: /day четверг)\n"
         "/session — прогноз на сессию\n"
         "/help — эта справка\n\n"
         "<i>By. Shmal</i>",
         parse_mode="HTML"
     )
 
-# Добавим обработчик для любого текста (не команды)
 @dp.message_handler()
 async def handle_other_messages(message: types.Message):
-    # Если пользователь просто написал день недели
     text = message.text.strip().lower()
     day_mapping = {
-        "понедельник": "Понедельник",
-        "пн": "Понедельник",
-        "вторник": "Вторник", 
-        "вт": "Вторник",
-        "среда": "Среда",
-        "ср": "Среда",
-        "четверг": "Четверг",
-        "чт": "Четверг",
-        "пятница": "Пятница",
-        "пт": "Пятница",
-        "суббота": "Суббота",
-        "сб": "Суббота",
+        "понедельник": "Понедельник", "пн": "Понедельник",
+        "вторник": "Вторник", "вт": "Вторник",
+        "среда": "Среда", "ср": "Среда",
+        "четверг": "Четверг", "чт": "Четверг",
+        "пятница": "Пятница", "пт": "Пятница",
+        "суббота": "Суббота", "сб": "Суббота",
         "сегодня": "today",
         "завтра": "tomorrow",
         "расписание": "schedule"
@@ -335,17 +319,51 @@ async def handle_other_messages(message: types.Message):
         elif day_mapping[text] == "schedule":
             await schedule_command(message)
         else:
-            # Эмулируем команду /day
             message.text = f"/day {text}"
             await day_command(message)
     elif "расписание" in text or "пары" in text:
         await schedule_command(message)
     elif "сессия" in text or "экзамен" in text:
         await session_command(message)
+    elif text in ["привет", "hello", "hi", "бот"]:
+        await start_command(message)
+
+# ========== ЗАПУСК ДЛЯ RENDER ==========
+async def on_startup(_):
+    """Функция запуска для Render"""
+    logger.info("🚀 Бот запускается на Render...")
+    logger.info(f"👥 ID группы: {GROUP_ID}")
+    logger.info(f"📅 Референсная неделя: {REFERENCE_WEEK_START}")
+    logger.info("✅ Бот успешно запущен и готов к работе!")
+    print("=" * 50)
+    print("🤖 Telegram Schedule Bot")
+    print("🚀 Успешно запущен на Render.com")
+    print("📞 Напишите /start вашему боту")
+    print("=" * 50)
 
 if __name__ == "__main__":
     try:
-        print("Бот запускается...")
-        executor.start_polling(dp, skip_updates=True)
+        logger.info("=" * 50)
+        logger.info("🚀 Запуск Telegram бота расписания")
+        logger.info("📅 Референсная неделя: %s", REFERENCE_WEEK_START)
+        logger.info("👥 ID группы: %s", GROUP_ID)
+        
+        # Проверка токена
+        if TOKEN == '8512277521:AAHYP10fWioTGeMQ30OUYOLlB1i-AMMmJT4':
+            logger.warning("⚠️  ВНИМАНИЕ: Используется тестовый токен!")
+            logger.warning("⚠️  Для продакшена установите переменную BOT_TOKEN на Render")
+        
+        logger.info("✅ Все проверки пройдены")
+        logger.info("=" * 50)
+        
+        # Запуск бота
+        executor.start_polling(
+            dp, 
+            skip_updates=True,
+            on_startup=on_startup
+        )
+        
     except Exception as e:
-        logging.error(f"Ошибка запуска бота: {e}")
+        logger.error(f"❌ Критическая ошибка запуска бота: {e}", exc_info=True)
+        print(f"❌ Ошибка: {e}")
+        sys.exit(1)

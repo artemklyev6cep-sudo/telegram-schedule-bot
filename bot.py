@@ -1,7 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 from datetime import date, timedelta
-from aiogram import Bot, Dispatcher, types, Router
+from aiogram import Bot, Dispatcher, types, Router, F
 from aiogram.filters import Command
 import random
 import logging
@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 # ==========================================
 
 # Безопасное получение токена из переменных окружения
-TOKEN = os.getenv('BOT_TOKEN', '8512277521:AAELR9m3JPCDGibOB3m2RRDBAuhjepHcTf0')
-if TOKEN == '8512277521:AAELR9m3JPCDGibOB3m2RRDBAuhjepHcTf0':
+TOKEN = os.getenv('BOT_TOKEN', '8512277521:AAE_s5IONdbZzgMzMU3LFlQqRAa00qUHpiQ')
+if TOKEN == '8512277521:AAE_s5IONdbZzgMzMU3LFlQqRAa00qUHpiQ':
     logger.warning("⚠️ Используется тестовый токен! Для продакшена установите BOT_TOKEN в переменные окружения")
 
 # Инициализация aiogram 3.x
@@ -45,10 +45,8 @@ def get_week_type(check_date=None):
     return "2" if delta_weeks % 2 == 0 else "1"  
 
 def fetch_schedule_table(for_date=None):
-    """Парсинг расписания с использованием html.parser вместо lxml"""
     if for_date is None:
         for_date = date.today()
-    
     week_type = get_week_type(for_date)
     URL = f"http://r.sf-misis.ru/group/{GROUP_ID}/{week_type}"
     
@@ -59,7 +57,7 @@ def fetch_schedule_table(for_date=None):
         logger.error(f"Ошибка при запросе расписания: {e}")
         return {}, week_type
     
-    # ВАЖНО: используем 'html.parser' вместо 'lxml'
+    # ВАЖНО: используем html.parser вместо lxml
     soup = BeautifulSoup(resp.text, "html.parser")
     table = soup.find("table", id="schedule-table")
     schedule = {day: [] for day in DAYS_ORDER}
@@ -71,22 +69,23 @@ def fetch_schedule_table(for_date=None):
     # Собираем времена пар из заголовка таблицы
     header_row = table.find("tr")
     times = []
+    time_cells = header_row.find_all("th")[1:]  # Пропускаем первый th с днями недели
     
-    # Пропускаем первый th (день недели)
-    for th in header_row.find_all("th")[1:]:
+    for th in time_cells:
         time_div = th.find("div", class_="table-time-2")
         if time_div:
             times.append(time_div.get_text(strip=True))
         else:
-            # Если нет div, берем текст из th
             time_text = th.get_text(strip=True)
-            times.append(time_text if time_text else "")
+            if time_text and any(char.isdigit() for char in time_text):
+                times.append(time_text)
+            else:
+                times.append("")
 
     # Проходим по всем строкам таблицы
     current_day = None
     
     for row in table.find_all("tr")[1:]:
-        # Проверяем день недели
         day_th = row.find("th", class_="table-weekdays")
         if day_th:
             day_name = day_th.get_text(strip=True)
@@ -97,7 +96,6 @@ def fetch_schedule_table(for_date=None):
         if not current_day:
             continue
 
-        # Собираем все ячейки с занятиями
         cells = row.find_all("td")
         
         for cell_index, cell in enumerate(cells):
@@ -105,13 +103,13 @@ def fetch_schedule_table(for_date=None):
                 continue
                 
             current_time = times[cell_index] if cell_index < len(times) else ""
+            cell_classes = cell.get("class", [])
             
-            # Проверяем наличие занятий
             if not cell.get_text(strip=True):
                 continue
             
             # Обычные занятия (без подгрупп)
-            if "table-single" in cell.get("class", []):
+            if "table-single" in cell_classes:
                 subject = cell.find("div", class_="table-subject")
                 teacher = cell.find("div", class_="table-teacher")
                 room = cell.find("div", class_="table-room")
@@ -128,7 +126,7 @@ def fetch_schedule_table(for_date=None):
                     schedule[current_day].append(lesson_text)
             
             # Занятия с подгруппами
-            elif "table-subgroups" in cell.get("class", []):
+            elif "table-subgroups" in cell_classes:
                 subgroups = cell.find_all("div", class_="table-subgroup-item")
                 
                 for subgroup in subgroups:
@@ -162,10 +160,7 @@ def fetch_schedule_table(for_date=None):
             
             # Если ячейка содержит занятия, но не имеет специального класса
             elif cell.get_text(strip=True):
-                subject = cell.find("div", class_="table-subject")
-                if not subject:
-                    subject = cell.find("span", class_="table-subject")
-                
+                subject = cell.find("div", class_="table-subject") or cell.find("span", class_="table-subject")
                 teacher = cell.find("div", class_="table-teacher") or cell.find("span", class_="table-teacher")
                 room = cell.find("div", class_="table-room") or cell.find("span", class_="table-room")
                 
@@ -180,6 +175,16 @@ def fetch_schedule_table(for_date=None):
                     
                     schedule[current_day].append(lesson_text)
     
+    # Удаляем дубликаты
+    for day in DAYS_ORDER:
+        unique_lessons = []
+        seen = set()
+        for lesson in schedule[day]:
+            if lesson not in seen:
+                seen.add(lesson)
+                unique_lessons.append(lesson)
+        schedule[day] = unique_lessons
+    
     return schedule, week_type
 
 def format_day_schedule(day_name, schedule):
@@ -191,7 +196,7 @@ def format_day_schedule(day_name, schedule):
         text += "🎉 Нет занятий\n"
     return text
 
-# ========== КОМАНДЫ БОТА ==========
+# ========== КОМАНДЫ БОТА (aiogram 3.x стиль) ==========
 
 @router.message(Command("schedule"))
 async def schedule_command(message: types.Message):
@@ -239,6 +244,7 @@ async def tomorrow_command(message: types.Message):
 @router.message(Command("day"))
 async def day_command(message: types.Message):
     try:
+        # Получаем аргументы команды
         args = message.text.split()
         if len(args) < 2:
             await message.reply("Укажите день недели после команды /day\nНапример: /day понедельник")
@@ -328,17 +334,45 @@ async def handle_other_messages(message: types.Message):
     elif text in ["привет", "hello", "hi", "бот"]:
         await start_command(message)
 
-# ========== ЗАПУСК ==========
+# ========== ЗАПУСК ДЛЯ RENDER ==========
+
+async def on_startup(_):
+    """Функция запуска для Render"""
+    logger.info("🚀 Бот запускается на Render...")
+    logger.info(f"👥 ID группы: {GROUP_ID}")
+    logger.info(f"📅 Референсная неделя: {REFERENCE_WEEK_START}")
+    logger.info("✅ Бот успешно запущен и готов к работе!")
+    print("=" * 50)
+    print("🤖 Telegram Schedule Bot")
+    print("🚀 Успешно запущен на Render.com")
+    print("📞 Напишите /start вашему боту")
+    print("=" * 50)
 
 if __name__ == "__main__":
     try:
-        logger.info("🚀 Бот запускается...")
-        logger.info(f"👥 ID группы: {GROUP_ID}")
-        logger.info(f"📅 Референсная неделя: {REFERENCE_WEEK_START}")
+        logger.info("=" * 50)
+        logger.info("🚀 Запуск Telegram бота расписания")
+        logger.info("📅 Референсная неделя: %s", REFERENCE_WEEK_START)
+        logger.info("👥 ID группы: %s", GROUP_ID)
         
-        dp.run_polling(bot, skip_updates=True)
+        # Проверка токена
+        if TOKEN == '8512277521:AAE_s5IONdbZzgMzMU3LFlQqRAa00qUHpiQ':
+            logger.warning("⚠️  ВНИМАНИЕ: Используется тестовый токен!")
+            logger.warning("⚠️  Для продакшена установите переменную BOT_TOKEN на Render")
+        
+        logger.info("✅ Все проверки пройдены")
+        logger.info("=" * 50)
+        
+        # Запуск бота для aiogram 3.x
+        dp.run_polling(
+            bot,
+            skip_updates=True,
+            on_startup=on_startup
+        )
         
     except Exception as e:
-        logger.error(f"❌ Ошибка запуска: {e}")
+        logger.error(f"❌ Критическая ошибка запуска бота: {e}", exc_info=True)
+        print(f"❌ Ошибка: {e}")
+        sys.exit(1)
 
 

@@ -1,4 +1,5 @@
 import requests
+from bs4 import BeautifulSoup
 from datetime import date, timedelta
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.filters import Command
@@ -44,22 +45,140 @@ def get_week_type(check_date=None):
     return "2" if delta_weeks % 2 == 0 else "1"  
 
 def fetch_schedule_table(for_date=None):
-    """Упрощенная функция для теста - возвращает тестовое расписание"""
+    """Парсинг расписания с использованием html.parser вместо lxml"""
     if for_date is None:
         for_date = date.today()
     
     week_type = get_week_type(for_date)
+    URL = f"http://r.sf-misis.ru/group/{GROUP_ID}/{week_type}"
     
-    # ТЕСТОВОЕ РАСПИСАНИЕ - замените на реальный парсинг позже
-    schedule = {
-        "Понедельник": ["- Математика | 9:00 | ауд. 101 | Иванов"],
-        "Вторник": ["- Физика | 10:30 | ауд. 202 | Петров"],
-        "Среда": ["- Программирование | 13:00 | ауд. 303 | Сидоров"],
-        "Четверг": ["- Английский | 11:00 | ауд. 404 | Смирнова"],
-        "Пятница": ["- Физкультура | 15:00 | спортзал | Кузнецов"],
-        "Суббота": [],
-        "Воскресенье": []
-    }
+    try:
+        resp = requests.get(URL, timeout=10)
+        resp.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Ошибка при запросе расписания: {e}")
+        return {}, week_type
+    
+    # ВАЖНО: используем 'html.parser' вместо 'lxml'
+    soup = BeautifulSoup(resp.text, "html.parser")
+    table = soup.find("table", id="schedule-table")
+    schedule = {day: [] for day in DAYS_ORDER}
+
+    if not table:
+        logger.warning("Таблица расписания не найдена")
+        return schedule, week_type
+
+    # Собираем времена пар из заголовка таблицы
+    header_row = table.find("tr")
+    times = []
+    
+    # Пропускаем первый th (день недели)
+    for th in header_row.find_all("th")[1:]:
+        time_div = th.find("div", class_="table-time-2")
+        if time_div:
+            times.append(time_div.get_text(strip=True))
+        else:
+            # Если нет div, берем текст из th
+            time_text = th.get_text(strip=True)
+            times.append(time_text if time_text else "")
+
+    # Проходим по всем строкам таблицы
+    current_day = None
+    
+    for row in table.find_all("tr")[1:]:
+        # Проверяем день недели
+        day_th = row.find("th", class_="table-weekdays")
+        if day_th:
+            day_name = day_th.get_text(strip=True)
+            if day_name in DAYS_ORDER:
+                current_day = day_name
+                continue
+        
+        if not current_day:
+            continue
+
+        # Собираем все ячейки с занятиями
+        cells = row.find_all("td")
+        
+        for cell_index, cell in enumerate(cells):
+            if cell_index >= len(times):
+                continue
+                
+            current_time = times[cell_index] if cell_index < len(times) else ""
+            
+            # Проверяем наличие занятий
+            if not cell.get_text(strip=True):
+                continue
+            
+            # Обычные занятия (без подгрупп)
+            if "table-single" in cell.get("class", []):
+                subject = cell.find("div", class_="table-subject")
+                teacher = cell.find("div", class_="table-teacher")
+                room = cell.find("div", class_="table-room")
+                
+                if subject and subject.get_text(strip=True):
+                    lesson_text = f"- {subject.get_text(strip=True)}"
+                    if current_time:
+                        lesson_text += f" | {current_time}"
+                    if room and room.get_text(strip=True):
+                        lesson_text += f" | {room.get_text(strip=True)}"
+                    if teacher and teacher.get_text(strip=True):
+                        lesson_text += f" | {teacher.get_text(strip=True)}"
+                    
+                    schedule[current_day].append(lesson_text)
+            
+            # Занятия с подгруппами
+            elif "table-subgroups" in cell.get("class", []):
+                subgroups = cell.find_all("div", class_="table-subgroup-item")
+                
+                for subgroup in subgroups:
+                    sg_name = subgroup.find("div", class_="table-sg-name")
+                    subject = subgroup.find("div", class_="table-subject")
+                    teacher = subgroup.find("div", class_="table-teacher")
+                    room = subgroup.find("div", class_="table-room")
+                    
+                    if subject and subject.get_text(strip=True):
+                        subgroup_num = ""
+                        if sg_name and sg_name.get_text(strip=True):
+                            sg_text = sg_name.get_text(strip=True)
+                            if "подгруппа" in sg_text.lower():
+                                subgroup_num = sg_text
+                            elif any(str(i) in sg_text for i in range(1, 10)):
+                                subgroup_num = f"Подгруппа {sg_text}"
+                            else:
+                                subgroup_num = sg_text
+                        
+                        lesson_text = f"- {subject.get_text(strip=True)}"
+                        if subgroup_num:
+                            lesson_text += f" ({subgroup_num})"
+                        if current_time:
+                            lesson_text += f" | {current_time}"
+                        if room and room.get_text(strip=True):
+                            lesson_text += f" | {room.get_text(strip=True)}"
+                        if teacher and teacher.get_text(strip=True):
+                            lesson_text += f" | {teacher.get_text(strip=True)}"
+                        
+                        schedule[current_day].append(lesson_text)
+            
+            # Если ячейка содержит занятия, но не имеет специального класса
+            elif cell.get_text(strip=True):
+                subject = cell.find("div", class_="table-subject")
+                if not subject:
+                    subject = cell.find("span", class_="table-subject")
+                
+                teacher = cell.find("div", class_="table-teacher") or cell.find("span", class_="table-teacher")
+                room = cell.find("div", class_="table-room") or cell.find("span", class_="table-room")
+                
+                if subject and subject.get_text(strip=True):
+                    lesson_text = f"- {subject.get_text(strip=True)}"
+                    if current_time:
+                        lesson_text += f" | {current_time}"
+                    if room and room.get_text(strip=True):
+                        lesson_text += f" | {room.get_text(strip=True)}"
+                    if teacher and teacher.get_text(strip=True):
+                        lesson_text += f" | {teacher.get_text(strip=True)}"
+                    
+                    schedule[current_day].append(lesson_text)
     
     return schedule, week_type
 
@@ -117,6 +236,40 @@ async def tomorrow_command(message: types.Message):
         logger.error(f"Ошибка в tomorrow_command: {e}")
         await message.reply("❌ Ошибка при получении расписания.")
 
+@router.message(Command("day"))
+async def day_command(message: types.Message):
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            await message.reply("Укажите день недели после команды /day\nНапример: /day понедельник")
+            return
+        
+        day_input = args[1].strip().lower()
+        
+        day_mapping = {
+            "понедельник": "Понедельник", "пн": "Понедельник",
+            "вторник": "Вторник", "вт": "Вторник",
+            "среда": "Среда", "ср": "Среда",
+            "четверг": "Четверг", "чт": "Четверг",
+            "пятница": "Пятница", "пт": "Пятница",
+            "суббота": "Суббота", "сб": "Суббота"
+        }
+        
+        if day_input not in day_mapping:
+            await message.reply("Неверный день недели. Используйте: понедельник, вторник, среда, четверг, пятница, суббота")
+            return
+        
+        day_name = day_mapping[day_input]
+        schedule, week_type = fetch_schedule_table()
+        week_type_name = "Знаменатель" if week_type == '2' else 'Числитель'
+        
+        text = f"<b>Расписание на {day_name.lower()} ({week_type_name}):</b>\n\n"
+        text += format_day_schedule(day_name, schedule)
+        await message.reply(text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Ошибка в day_command: {e}")
+        await message.reply("❌ Ошибка при получении расписания.")
+
 @router.message(Command("session"))
 async def session_command(message: types.Message):
     answers = [
@@ -137,6 +290,7 @@ async def start_command(message: types.Message):
         "/schedule — расписание на неделю\n"
         "/today — на сегодня\n"
         "/tomorrow — на завтра\n"
+        "/day [день] — на конкретный день\n"
         "/session — прогноз на сессию\n"
         "/help — эта справка\n\n"
         "<i>By. Shmal</i>",
@@ -146,12 +300,33 @@ async def start_command(message: types.Message):
 @router.message()
 async def handle_other_messages(message: types.Message):
     text = message.text.strip().lower()
-    if text in ["привет", "hello", "hi", "бот"]:
-        await start_command(message)
+    day_mapping = {
+        "понедельник": "Понедельник", "пн": "Понедельник",
+        "вторник": "Вторник", "вт": "Вторник",
+        "среда": "Среда", "ср": "Среда",
+        "четверг": "Четверг", "чт": "Четверг",
+        "пятница": "Пятница", "пт": "Пятница",
+        "суббота": "Суббота", "сб": "Суббота",
+        "сегодня": "today",
+        "завтра": "tomorrow",
+        "расписание": "schedule"
+    }
+    
+    if text in day_mapping:
+        if day_mapping[text] == "today":
+            await today_command(message)
+        elif day_mapping[text] == "tomorrow":
+            await tomorrow_command(message)
+        elif day_mapping[text] == "schedule":
+            await schedule_command(message)
+        else:
+            await day_command(types.Message(text=f"/day {text}"))
+    elif "расписание" in text or "пары" in text:
+        await schedule_command(message)
     elif "сессия" in text or "экзамен" in text:
         await session_command(message)
-    else:
-        await message.reply("Напишите /help для списка команд")
+    elif text in ["привет", "hello", "hi", "бот"]:
+        await start_command(message)
 
 # ========== ЗАПУСК ==========
 
@@ -165,6 +340,4 @@ if __name__ == "__main__":
         
     except Exception as e:
         logger.error(f"❌ Ошибка запуска: {e}")
-
-
 

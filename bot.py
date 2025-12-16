@@ -1,8 +1,8 @@
 import requests
 from bs4 import BeautifulSoup
 from datetime import date, timedelta, datetime
-from aiogram import Bot, Dispatcher, types
-# УДАЛИЛИ: from aiogram.utils import executor  ← ЭТА СТРОКА БОЛЬШЕ НЕ НУЖНА
+from aiogram import Bot, Dispatcher, types, Router, F
+from aiogram.filters import Command
 import random
 import logging
 import os
@@ -30,8 +30,11 @@ TOKEN = os.getenv('BOT_TOKEN', '8512277521:AAHYP10fWioTGeMQ30OUYOLlB1i-AMMmJT4')
 if TOKEN == '8512277521:AAHYP10fWioTGeMQ30OUYOLlB1i-AMMmJT4':
     logger.warning("⚠️ Используется тестовый токен! Для продакшена установите BOT_TOKEN в переменные окружения")
 
+# Инициализация aiogram 3.x
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+router = Router()
+dp.include_router(router)
 
 # Убедитесь, что это правильный ID группы
 GROUP_ID = 3808
@@ -193,7 +196,9 @@ def format_day_schedule(day_name, schedule):
         text += "🎉 Нет занятий\n"
     return text
 
-@dp.message_handler(commands=["schedule"])
+# ========== КОМАНДЫ БОТА (aiogram 3.x стиль) ==========
+
+@router.message(Command("schedule"))
 async def schedule_command(message: types.Message):
     try:
         schedule, week_type = fetch_schedule_table()
@@ -206,7 +211,7 @@ async def schedule_command(message: types.Message):
         logger.error(f"Ошибка в schedule_command: {e}")
         await message.reply("❌ Ошибка при получении расписания.")
 
-@dp.message_handler(commands=["today"])
+@router.message(Command("today"))
 async def today_command(message: types.Message):
     try:
         schedule, week_type = fetch_schedule_table()
@@ -219,7 +224,7 @@ async def today_command(message: types.Message):
         logger.error(f"Ошибка в today_command: {e}")
         await message.reply("❌ Ошибка при получении расписания.")
 
-@dp.message_handler(commands=["tomorrow"])
+@router.message(Command("tomorrow"))
 async def tomorrow_command(message: types.Message):
     try:
         tomorrow = date.today() + timedelta(days=1)
@@ -236,14 +241,15 @@ async def tomorrow_command(message: types.Message):
         logger.error(f"Ошибка в tomorrow_command: {e}")
         await message.reply("❌ Ошибка при получении расписания.")
 
-@dp.message_handler(commands=["day"])
+@router.message(Command("day"))
 async def day_command(message: types.Message):
     try:
-        args = message.get_args().strip().lower()
-        
-        if not args:
+        args = message.text.split()
+        if len(args) < 2:
             await message.reply("Укажите день недели после команды /day\nНапример: /day понедельник")
             return
+        
+        day_input = args[1].strip().lower()
         
         day_mapping = {
             "понедельник": "Понедельник", "пн": "Понедельник",
@@ -254,11 +260,11 @@ async def day_command(message: types.Message):
             "суббота": "Суббота", "сб": "Суббота"
         }
         
-        if args not in day_mapping:
+        if day_input not in day_mapping:
             await message.reply("Неверный день недели. Используйте: понедельник, вторник, среда, четверг, пятница, суббота")
             return
         
-        day_name = day_mapping[args]
+        day_name = day_mapping[day_input]
         schedule, week_type = fetch_schedule_table()
         week_type_name = "Знаменатель" if week_type == '2' else 'Числитель'
         
@@ -269,7 +275,7 @@ async def day_command(message: types.Message):
         logger.error(f"Ошибка в day_command: {e}")
         await message.reply("❌ Ошибка при получении расписания.")
 
-@dp.message_handler(commands=["session"])
+@router.message(Command("session"))
 async def session_command(message: types.Message):
     answers = [
         "✅ Сдашь!",
@@ -281,7 +287,7 @@ async def session_command(message: types.Message):
     answer = random.choice(answers)
     await message.reply(f"🎓 Прогноз на сессию:\n\n{answer}")
 
-@dp.message_handler(commands=["start", "help"])
+@router.message(Command("start", "help"))
 async def start_command(message: types.Message):
     await message.reply(
         "📚 <b>Бот-расписание МИСИС</b>\n\n"
@@ -296,7 +302,7 @@ async def start_command(message: types.Message):
         parse_mode="HTML"
     )
 
-@dp.message_handler()
+@router.message()
 async def handle_other_messages(message: types.Message):
     text = message.text.strip().lower()
     day_mapping = {
@@ -319,8 +325,8 @@ async def handle_other_messages(message: types.Message):
         elif day_mapping[text] == "schedule":
             await schedule_command(message)
         else:
-            message.text = f"/day {text}"
-            await day_command(message)
+            # Эмулируем команду /day
+            await day_command(types.Message(text=f"/day {text}"))
     elif "расписание" in text or "пары" in text:
         await schedule_command(message)
     elif "сессия" in text or "экзамен" in text:
@@ -369,5 +375,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
  
+
 
 

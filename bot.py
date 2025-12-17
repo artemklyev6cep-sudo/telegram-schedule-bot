@@ -322,11 +322,9 @@ async def handle_other_messages(message: types.Message):
         else:
             message.text = f"/day {text}"
             await day_command(message)
-    elif "расписание" in text or "пары" in text:
-        await schedule_command(message)
-    elif "сессия" in text or "экзамен" in text:
+    elif "расписание бот" in text:
         await session_command(message)
-    elif text in ["привет", "hello", "hi", "бот"]:
+    elif text in ["бот"]:
         await start_command(message)
 
 async def on_startup(_):
@@ -379,6 +377,7 @@ if __name__ == "__main__":
         logger.error(f"❌ Критическая ошибка запуска бота: {e}", exc_info=True)
         print(f"❌ Ошибка: {e}")
         sys.exit(1)
+
 
 
 

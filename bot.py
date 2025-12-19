@@ -8,22 +8,24 @@ import logging
 import os
 import sys
 import asyncio
-import re
 
 # ========== НАСТРОЙКИ ДЛЯ BOTHOST ==========
+# Убедимся, что используется правильный event loop
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+# Настройка логирования для Bothost
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(sys.stdout)
+        logging.StreamHandler(sys.stdout)  # Вывод в консоль Bothost
     ]
 )
 logger = logging.getLogger(__name__)
 # ===========================================
 
+# Безопасное получение токена из переменных окружения
 TOKEN = os.getenv('BOT_TOKEN')
 if not TOKEN:
     logger.error("❌ Не найден BOT_TOKEN в переменных окружения!")
@@ -32,6 +34,7 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
+# Убедитесь, что это правильный ID группы
 GROUP_ID = 3808
 REFERENCE_WEEK_START = date(2025, 12, 15)  
 DAYS_ORDER = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
@@ -63,9 +66,10 @@ def fetch_schedule_table(for_date=None):
     if not table:
         return schedule, week_type
 
+    # Собираем времена пар из заголовка таблицы
     header_row = table.find("tr")
     times = []
-    time_cells = header_row.find_all("th")[1:]
+    time_cells = header_row.find_all("th")[1:]  # Пропускаем первый th с днями недели
     
     for th in time_cells:
         time_div = th.find("div", class_="table-time-2")
@@ -78,6 +82,7 @@ def fetch_schedule_table(for_date=None):
             else:
                 times.append("")
 
+    # Проходим по всем строкам таблицы
     for row in table.find_all("tr")[1:]:
         day_th = row.find("th", class_="table-weekdays")
         current_day = None
@@ -101,6 +106,7 @@ def fetch_schedule_table(for_date=None):
             if not cell.get_text(strip=True):
                 continue
             
+            # Обычные занятия (без подгрупп)
             if "table-single" in cell_classes:
                 subject = cell.find("div", class_="table-subject")
                 teacher = cell.find("div", class_="table-teacher")
@@ -117,6 +123,7 @@ def fetch_schedule_table(for_date=None):
                     
                     schedule[current_day].append(lesson_text)
             
+            # Занятия с подгруппами
             elif "table-subgroups" in cell_classes:
                 subgroups = cell.find_all("div", class_="table-subgroup-item")
                 
@@ -149,6 +156,7 @@ def fetch_schedule_table(for_date=None):
                         
                         schedule[current_day].append(lesson_text)
             
+            # Если ячейка содержит занятия, но не имеет специального класса
             elif cell.get_text(strip=True):
                 subject = cell.find("div", class_="table-subject") or cell.find("span", class_="table-subject")
                 teacher = cell.find("div", class_="table-teacher") or cell.find("span", class_="table-teacher")
@@ -165,6 +173,7 @@ def fetch_schedule_table(for_date=None):
                     
                     schedule[current_day].append(lesson_text)
     
+    # Удаляем дубликаты
     for day in DAYS_ORDER:
         unique_lessons = []
         seen = set()
@@ -176,153 +185,6 @@ def fetch_schedule_table(for_date=None):
     
     return schedule, week_type
 
-def fetch_exam_schedule():
-    """Получает расписание экзаменов с сайта"""
-    try:
-        URL = f"http://r.sf-misis.ru/group/{GROUP_ID}/1"
-        resp = requests.get(URL, timeout=10)
-        resp.raise_for_status()
-        
-        soup = BeautifulSoup(resp.text, "lxml")
-        
-        # Получаем весь текст страницы
-        all_text = soup.get_text(separator='\n')
-        
-        # Ищем блок с расписанием сессии
-        session_pattern = r'Расписание сессии\s*\n*(.+?)(?:\n\n|\n\s*\n|$)'
-        match = re.search(session_pattern, all_text, re.DOTALL | re.IGNORECASE)
-        
-        if not match:
-            # Альтернативный поиск
-            session_pattern = r'сессии\s*\n*(.+?)(?:\n\n|\n\s*\n|$)'
-            match = re.search(session_pattern, all_text, re.DOTALL | re.IGNORECASE)
-        
-        if not match:
-            logger.warning("Не найден блок расписания сессии")
-            return []
-        
-        session_text = match.group(1).strip()
-        
-        # Удаляем лишние пробелы и переносы
-        session_text = re.sub(r'\s+', ' ', session_text)
-        
-        # Парсим экзамены - каждый экзамен начинается с предмета и типа в скобках
-        # Пример: "Современные информационные технологии (Консультация) 13.01.2026, с 09:00 до 10:30 2/202, Верзилина Ольга Александровна"
-        
-        # Разбиваем текст на отдельные экзамены
-        # Ищем шаблон: Предмет (Тип) Дата, Время Аудитория, Преподаватель
-        exam_pattern = r'([А-Яа-яЁё\s\-]+)\s*\((Консультация|Экзамен)\)\s*(\d{2}\.\d{2}\.\d{4}),\s*с (\d{2}:\d{2}) до (\d{2}:\d{2})\s*([^,]+),\s*([А-Я][а-я]+\s[А-Я][а-я]+\s[А-Я][а-я]+)'
-        
-        exams = []
-        matches = re.findall(exam_pattern, session_text)
-        
-        for match in matches:
-            subject = match[0].strip()
-            exam_type = match[1].strip()
-            date_str = match[2].strip()
-            time_start = match[3].strip()
-            time_end = match[4].strip()
-            room = match[5].strip()
-            teacher = match[6].strip()
-            
-            time_str = f"с {time_start} до {time_end}"
-            
-            exams.append({
-                'subject': subject,
-                'type': exam_type,
-                'date': date_str,
-                'time': time_str,
-                'room': room,
-                'teacher': teacher
-            })
-        
-        # Если не нашли по первому паттерну, пробуем альтернативный
-        if not exams:
-            # Альтернативный паттерн без "с" и "до"
-            alt_pattern = r'([А-Яа-яЁё\s\-]+)\s*\((Консультация|Экзамен)\)\s*(\d{2}\.\d{2}\.\d{4}),\s*(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})\s*([^,]+),\s*([А-Я][а-я]+\s[А-Я][а-я]+\s[А-Я][а-я]+)'
-            matches = re.findall(alt_pattern, session_text)
-            
-            for match in matches:
-                subject = match[0].strip()
-                exam_type = match[1].strip()
-                date_str = match[2].strip()
-                time_start = match[3].strip()
-                time_end = match[4].strip()
-                room = match[5].strip()
-                teacher = match[6].strip()
-                
-                time_str = f"с {time_start} до {time_end}"
-                
-                exams.append({
-                    'subject': subject,
-                    'type': exam_type,
-                    'date': date_str,
-                    'time': time_str,
-                    'room': room,
-                    'teacher': teacher
-                })
-        
-        # Если все еще нет данных, пробуем более простой парсинг
-        if not exams:
-            # Разделяем по преподавателям (ФИО из 3 слов)
-            parts = re.split(r'([А-Я][а-я]+\s[А-Я][а-я]+\s[А-Я][а-я]+)', session_text)
-            
-            for i in range(1, len(parts), 2):
-                if i < len(parts):
-                    teacher = parts[i].strip()
-                    exam_info = parts[i-1].strip() if i > 0 else ""
-                    
-                    # Ищем в exam_info предмет, тип, дату, время, аудиторию
-                    if exam_info:
-                        # Ищем дату
-                        date_match = re.search(r'(\d{2}\.\d{2}\.\d{4})', exam_info)
-                        date_str = date_match.group(1) if date_match else ""
-                        
-                        # Ищем время
-                        time_match = re.search(r'(\d{2}:\d{2})\s*[—-]\s*(\d{2}:\d{2})', exam_info)
-                        if time_match:
-                            time_str = f"с {time_match.group(1)} до {time_match.group(2)}"
-                        else:
-                            time_str = ""
-                        
-                        # Ищем аудиторию
-                        room_match = re.search(r'(\d+/\d+)', exam_info)
-                        room = room_match.group(1) if room_match else ""
-                        
-                        # Ищем предмет и тип
-                        subject_type_match = re.search(r'([А-Яа-яЁё\s\-]+)\s*\((Консультация|Экзамен)\)', exam_info)
-                        if subject_type_match:
-                            subject = subject_type_match.group(1).strip()
-                            exam_type = subject_type_match.group(2).strip()
-                        else:
-                            # Если не нашли в скобках, пробуем найти просто предмет
-                            subject_match = re.search(r'^([А-Яа-яЁё\s\-]+?)(?=\s*\d{2}\.\d{2}\.\d{4}|$)', exam_info)
-                            subject = subject_match.group(1).strip() if subject_match else exam_info
-                            exam_type = ""
-                        
-                        if subject and date_str:
-                            exams.append({
-                                'subject': subject,
-                                'type': exam_type,
-                                'date': date_str,
-                                'time': time_str,
-                                'room': room,
-                                'teacher': teacher
-                            })
-        
-        # Сортируем по дате
-        exams.sort(key=lambda x: datetime.strptime(x['date'], '%d.%m.%Y') if x['date'] else datetime.max)
-        
-        logger.info(f"Найдено {len(exams)} записей о сессии")
-        return exams
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Ошибка при запросе расписания сессии: {e}")
-        return []
-    except Exception as e:
-        logger.error(f"Ошибка при парсинге расписания сессии: {e}", exc_info=True)
-        return []
-
 def format_day_schedule(day_name, schedule):
     text = f"<b>{day_name}:</b>\n"
     if schedule.get(day_name) and len(schedule[day_name]) > 0:
@@ -332,60 +194,13 @@ def format_day_schedule(day_name, schedule):
         text += "🎉 Нет занятий\n"
     return text
 
-@dp.message_handler(commands=["exam"])
-async def exam_command(message: types.Message):
-    """Выводит расписание сессии"""
-    try:
-        exam_schedule = fetch_exam_schedule()
-        
-        if not exam_schedule:
-            await message.reply(
-                "❌ Не удалось загрузить расписание сессии.\n"
-                "Попробуйте позже или проверьте сайт."
-            )
-            return
-        
-        text = "<b>📅 Расписание сессии:</b>\n\n"
-        
-        for exam in exam_schedule:
-            # Определяем эмодзи по типу
-            if exam['type'] == "Консультация":
-                emoji = "💬"
-            elif exam['type'] == "Экзамен":
-                emoji = "📝"
-            else:
-                emoji = "📚"
-            
-            text += f"{emoji} <b>{exam['subject']}</b>\n"
-            if exam['type']:
-                text += f"   🏷️ {exam['type']}\n"
-            if exam['date']:
-                text += f"   📅 {exam['date']}\n"
-            if exam['time']:
-                text += f"   ⏰ {exam['time']}\n"
-            if exam['room']:
-                text += f"   🏫 {exam['room']}\n"
-            if exam['teacher']:
-                text += f"   👨‍🏫 {exam['teacher']}\n"
-            text += "\n"
-        
-        # Убрана строка с "Загружено"
-        await message.reply(text, parse_mode="HTML")
-        
-    except Exception as e:
-        logger.error(f"Ошибка в exam_command: {e}", exc_info=True)
-        await message.reply(
-            "❌ Ошибка при получении расписания сессии.\n"
-            "Попробуйте позже."
-        )
-
 @dp.message_handler(commands=["schedule"])
 async def schedule_command(message: types.Message):
     try:
         schedule, week_type = fetch_schedule_table()
         week_type_name = "Знаменатель" if week_type == '2' else 'Числитель'
         text = f"<b>Расписание на эту неделю ({week_type_name}):</b>\n\n"
-        for day in DAYS_ORDER[:-1]:
+        for day in DAYS_ORDER[:-1]:  # Исключаем воскресенье
             text += format_day_schedule(day, schedule) + "\n"
         await message.reply(text, parse_mode="HTML")
     except Exception as e:
@@ -476,21 +291,23 @@ async def start_command(message: types.Message):
         "/today — на сегодня\n"
         "/tomorrow — на завтра\n"
         "/day [день] — на конкретный день\n"
-        "/exam — расписание сессии\n"
         "/session — прогноз на сессию\n"
         "/help — эта справка\n\n"
         "<i>By. Shmal</i>",
         parse_mode="HTML"
     )
 
+@dp.message_handler(lambda message: message.text and message.text.strip().lower() == "бот")
+async def handle_bot_message(message: types.Message):
+    """Обработчик только для сообщения 'бот'"""
+    await start_command(message)
+
 @dp.message_handler()
 async def handle_other_messages(message: types.Message):
-    """Обработка только сообщения 'бот'"""
-    text = message.text.strip().lower()
-    
-    # Реагируем только на сообщение "бот"
-    if text == "бот":
-        await start_command(message)
+    """Бот игнорирует все остальные сообщения, кроме команд и 'бот'"""
+    # Просто игнорируем все остальные сообщения
+    # Можно добавить логирование, если нужно
+    logger.debug(f"Сообщение проигнорировано: {message.text}")
 
 async def on_startup(_):
     """Функция запуска для Bothost"""
@@ -512,6 +329,7 @@ if __name__ == "__main__":
         logger.info("📅 Референсная неделя: %s", REFERENCE_WEEK_START)
         logger.info("👥 ID группы: %s", GROUP_ID)
         
+        # Проверка токена
         if not TOKEN:
             logger.error("❌ BOT_TOKEN не установлен!")
             raise ValueError("Установите BOT_TOKEN в переменных окружения Bothost")
@@ -519,13 +337,16 @@ if __name__ == "__main__":
         logger.info("✅ Все проверки пройдены")
         logger.info("=" * 50)
         
+        # Запуск бота (специально для Bothost)
         import asyncio
         
+        # Получаем текущую event loop и запускаем поллинг
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         try:
             logger.info("🤖 Запуск бота на Bothost.ru...")
+            # Запускаем поллинг в рамках созданной event loop
             loop.run_until_complete(
                 executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
             )
@@ -538,7 +359,6 @@ if __name__ == "__main__":
         logger.error(f"❌ Критическая ошибка запуска бота: {e}", exc_info=True)
         print(f"❌ Ошибка: {e}")
         sys.exit(1)
-
 
 
 

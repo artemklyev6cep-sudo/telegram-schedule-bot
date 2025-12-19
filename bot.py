@@ -187,94 +187,139 @@ def fetch_exam_schedule():
         
         exam_data = []
         
-        session_header = soup.find(string=re.compile(r"Расписание сессии", re.IGNORECASE))
+        # Ищем текст расписания сессии
+        all_text = soup.get_text(separator='\n')
+        lines = all_text.split('\n')
         
-        if not session_header:
-            session_header = soup.find(['h1', 'h2', 'h3', 'h4', 'div', 'p'], 
-                                      string=re.compile(r"сесси", re.IGNORECASE))
+        # Ищем начало расписания сессии
+        start_index = -1
+        for i, line in enumerate(lines):
+            if 'Расписание сессии' in line:
+                start_index = i
+                break
         
-        if session_header:
-            parent = session_header.parent
+        if start_index == -1:
+            # Альтернативный поиск
+            for i, line in enumerate(lines):
+                if 'сесси' in line.lower():
+                    start_index = i
+                    break
+        
+        if start_index == -1:
+            logger.warning("Не найдено расписание сессии на странице")
+            return []
+        
+        # Собираем строки с расписанием
+        session_lines = []
+        for i in range(start_index + 1, len(lines)):
+            line = lines[i].strip()
+            if line and len(line) > 5:
+                # Если встречаем пустую строку после блока расписания - останавливаемся
+                if i > start_index + 20:  # Ограничиваем поиск 20 строками после заголовка
+                    break
+                session_lines.append(line)
+        
+        # Объединяем строки в один текст для парсинга
+        session_text = '\n'.join(session_lines)
+        
+        # Паттерны для парсинга
+        # Ищем строки вида: "Предмет (Тип) Дата, Время Аудитория, Преподаватель"
+        # Пример: "Современные информационные технологии (Консультация) 13.01.2026, с 09:00 до 10:30 2/202, Верзилина Ольга Александровна"
+        
+        # Разделяем по преподавателям (русские ФИО с заглавных букв)
+        patterns = [
+            # Паттерн 1: Разделение по ФИО преподавателя
+            r'(.+?)\s*(\d{2}\.\d{2}\.\d{4}),\s*(с \d{2}:\d{2} до \d{2}:\d{2})\s*([^,]+),\s*([А-Я][а-я]+ [А-Я][а-я]+ [А-Я][а-я]+)',
+            # Паттерн 2: Без запятой перед ФИО
+            r'(.+?)\s*(\d{2}\.\d{2}\.\d{4}),\s*(с \d{2}:\d{2} до \d{2}:\d{2})\s*([^,]+)\s*([А-Я][а-я]+ [А-Я][а-я]+ [А-Я][а-я]+)',
+        ]
+        
+        exams = []
+        
+        # Сначала пробуем найти все совпадения по паттерну
+        for pattern in patterns:
+            matches = re.findall(pattern, session_text)
+            if matches:
+                for match in matches:
+                    subject_type = match[0].strip()
+                    date_str = match[1].strip()
+                    time_str = match[2].strip()
+                    room = match[3].strip()
+                    teacher = match[4].strip()
+                    
+                    # Разделяем предмет и тип
+                    subject = subject_type
+                    exam_type = ""
+                    
+                    # Ищем тип в скобках
+                    type_match = re.search(r'\((Консультация|Экзамен)\)', subject_type)
+                    if type_match:
+                        exam_type = type_match.group(1)
+                        subject = subject_type.replace(f'({exam_type})', '').strip()
+                    
+                    exams.append({
+                        'subject': subject,
+                        'type': exam_type,
+                        'date': date_str,
+                        'time': time_str,
+                        'room': room,
+                        'teacher': teacher
+                    })
+                break
+        
+        # Если не нашли по паттерну, пробуем другой подход
+        if not exams:
+            # Разбиваем текст по датам
+            date_pattern = r'\d{2}\.\d{2}\.\d{4}'
+            parts = re.split(f'({date_pattern})', session_text)
             
-            next_elements = []
-            
-            current = parent.find_next_sibling()
-            for _ in range(10):
-                if current and current.get_text(strip=True):
-                    next_elements.append(current.get_text(strip=True))
-                elif current and hasattr(current, 'find_all'):
-                    text_elements = current.find_all(string=True, recursive=True)
-                    for text in text_elements:
-                        if text.strip() and len(text.strip()) > 10:
-                            next_elements.append(text.strip())
-                current = current.find_next_sibling() if current else None
-            
-            if not next_elements:
-                all_text = parent.get_text(separator='\n', strip=True)
-                lines = all_text.split('\n')
-                found_header = False
-                for line in lines:
-                    if re.search(r"Расписание сессии", line, re.IGNORECASE):
-                        found_header = True
-                        continue
-                    if found_header and line.strip():
-                        next_elements.append(line.strip())
-            
-            for element in next_elements:
-                if element and len(element) > 20:
-                    lines = element.split('\n')
-                    for line in lines:
-                        line = line.strip()
-                        if line and len(line) > 10:
-                            exam_data.append(line)
+            for i in range(1, len(parts), 2):
+                if i + 1 < len(parts):
+                    date_str = parts[i].strip()
+                    rest = parts[i + 1].strip()
+                    
+                    # Ищем время
+                    time_match = re.search(r'с \d{2}:\d{2} до \d{2}:\d{2}', rest)
+                    if time_match:
+                        time_str = time_match.group(0)
+                        
+                        # Разделяем остальную часть
+                        rest_parts = rest.split(time_str)
+                        if len(rest_parts) >= 2:
+                            subject_part = rest_parts[0].strip()
+                            after_time = rest_parts[1].strip()
+                            
+                            # Ищем аудиторию и преподавателя
+                            room_teacher_parts = after_time.split(',')
+                            room = room_teacher_parts[0].strip() if len(room_teacher_parts) > 0 else ""
+                            teacher = room_teacher_parts[1].strip() if len(room_teacher_parts) > 1 else ""
+                            
+                            # Разделяем предмет и тип
+                            subject = subject_part
+                            exam_type = ""
+                            
+                            type_match = re.search(r'\((Консультация|Экзамен)\)', subject_part)
+                            if type_match:
+                                exam_type = type_match.group(1)
+                                subject = subject_part.replace(f'({exam_type})', '').strip()
+                            
+                            exams.append({
+                                'subject': subject,
+                                'type': exam_type,
+                                'date': date_str,
+                                'time': time_str,
+                                'room': room,
+                                'teacher': teacher
+                            })
         
-        if not exam_data:
-            all_text = soup.get_text(separator='\n')
-            lines = all_text.split('\n')
-            
-            for line in lines:
-                line = line.strip()
-                if re.search(r'\d{2}\.\d{2}\.\d{4}.*\d{2}:\d{2}', line):
-                    exam_data.append(line)
-        
-        cleaned_exams = []
-        current_exam = []
-        
-        for line in exam_data:
-            line = ' '.join(line.split())
-            
-            if '(' in line and ')' in line and any(word in line.lower() for word in ['экзамен', 'консультац']):
-                if current_exam:
-                    cleaned_exams.append(' '.join(current_exam))
-                    current_exam = []
-                current_exam.append(line)
-            elif current_exam and (re.search(r'\d{2}\.\d{2}\.\d{4}', line) or '/' in line):
-                current_exam.append(line)
-                if any(char.isdigit() for char in line) and any(char.isalpha() for char in line):
-                    cleaned_exams.append(' '.join(current_exam))
-                    current_exam = []
-            elif line:
-                if not current_exam and any(word in line.lower() for word in ['экзамен', 'консультац']):
-                    current_exam.append(line)
-        
-        if current_exam:
-            cleaned_exams.append(' '.join(current_exam))
-        
-        unique_exams = []
-        seen = set()
-        for exam in cleaned_exams:
-            if exam and exam not in seen:
-                seen.add(exam)
-                unique_exams.append(exam)
-        
-        logger.info(f"Найдено {len(unique_exams)} записей о сессии")
-        return unique_exams
+        logger.info(f"Найдено {len(exams)} записей о сессии")
+        return exams
         
     except requests.exceptions.RequestException as e:
         logger.error(f"Ошибка при запросе расписания сессии: {e}")
         return []
     except Exception as e:
-        logger.error(f"Ошибка при парсинге расписания сессии: {e}")
+        logger.error(f"Ошибка при парсинге расписания сессии: {e}", exc_info=True)
         return []
 
 def format_day_schedule(day_name, schedule):
@@ -299,34 +344,36 @@ async def exam_command(message: types.Message):
             )
             return
         
+        # Сортируем по дате
+        exam_schedule.sort(key=lambda x: datetime.strptime(x['date'], '%d.%m.%Y'))
+        
         text = "<b>📅 Расписание сессии:</b>\n\n"
         
-        for i, exam in enumerate(exam_schedule, 1):
-            exam_lines = exam.split(', ')
-            if len(exam_lines) >= 3:
-                subject_line = exam_lines[0]
-                datetime_line = exam_lines[1] if len(exam_lines) > 1 else ""
-                location_line = exam_lines[2] if len(exam_lines) > 2 else ""
-                
-                if "консультац" in subject_line.lower():
-                    emoji = "💬"
-                elif "экзамен" in subject_line.lower():
-                    emoji = "📝"
-                else:
-                    emoji = "📚"
-                
-                text += f"{emoji} <b>{subject_line}</b>\n"
-                text += f"   📅 {datetime_line}\n"
-                text += f"   🏫 {location_line}\n\n"
+        for exam in exam_schedule:
+            # Определяем эмодзи по типу
+            if exam['type'] == "Консультация":
+                emoji = "💬"
+                type_text = "Консультация"
+            elif exam['type'] == "Экзамен":
+                emoji = "📝"
+                type_text = "Экзамен"
             else:
-                text += f"📌 {exam}\n\n"
+                emoji = "📚"
+                type_text = exam['type'] if exam['type'] else "Занятие"
+            
+            text += f"{emoji} <b>{exam['subject']}</b>\n"
+            text += f"   🏷️ <i>{type_text}</i>\n"
+            text += f"   📅 {exam['date']}\n"
+            text += f"   ⏰ {exam['time']}\n"
+            text += f"   🏫 {exam['room']}\n"
+            text += f"   👨‍🏫 {exam['teacher']}\n\n"
         
         text += f"\n<i>Загружено: {datetime.now().strftime('%d.%m.%Y %H:%M')}</i>"
         
         await message.reply(text, parse_mode="HTML")
         
     except Exception as e:
-        logger.error(f"Ошибка в exam_command: {e}")
+        logger.error(f"Ошибка в exam_command: {e}", exc_info=True)
         await message.reply(
             "❌ Ошибка при получении расписания сессии.\n"
             "Попробуйте позже."
@@ -436,7 +483,6 @@ async def start_command(message: types.Message):
         parse_mode="HTML"
     )
 
-# ИЗМЕНЕНО: Упрощена обработка текстовых сообщений
 @dp.message_handler()
 async def handle_other_messages(message: types.Message):
     """Обработка только сообщения 'бот'"""
@@ -445,11 +491,6 @@ async def handle_other_messages(message: types.Message):
     # Реагируем только на сообщение "бот"
     if text == "бот":
         await start_command(message)
-    # Все остальные сообщения без '/' игнорируем
-    else:
-        # Можно добавить логирование, если нужно
-        logger.debug(f"Игнорируем сообщение без команды: '{text}'")
-        # Не отправляем ответ - бот просто игнорирует
 
 async def on_startup(_):
     """Функция запуска для Bothost"""
@@ -497,6 +538,7 @@ if __name__ == "__main__":
         logger.error(f"❌ Критическая ошибка запуска бота: {e}", exc_info=True)
         print(f"❌ Ошибка: {e}")
         sys.exit(1)
+
 
 
 

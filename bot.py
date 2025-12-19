@@ -185,124 +185,122 @@ def fetch_exam_schedule():
         
         soup = BeautifulSoup(resp.text, "lxml")
         
-        exam_data = []
-        
-        # Ищем текст расписания сессии
+        # Получаем весь текст страницы
         all_text = soup.get_text(separator='\n')
-        lines = all_text.split('\n')
         
-        # Ищем начало расписания сессии
-        start_index = -1
-        for i, line in enumerate(lines):
-            if 'Расписание сессии' in line:
-                start_index = i
-                break
+        # Ищем блок с расписанием сессии
+        session_pattern = r'Расписание сессии\s*\n*(.+?)(?:\n\n|\n\s*\n|$)'
+        match = re.search(session_pattern, all_text, re.DOTALL | re.IGNORECASE)
         
-        if start_index == -1:
+        if not match:
             # Альтернативный поиск
-            for i, line in enumerate(lines):
-                if 'сесси' in line.lower():
-                    start_index = i
-                    break
+            session_pattern = r'сессии\s*\n*(.+?)(?:\n\n|\n\s*\n|$)'
+            match = re.search(session_pattern, all_text, re.DOTALL | re.IGNORECASE)
         
-        if start_index == -1:
-            logger.warning("Не найдено расписание сессии на странице")
+        if not match:
+            logger.warning("Не найден блок расписания сессии")
             return []
         
-        # Собираем строки с расписанием
-        session_lines = []
-        for i in range(start_index + 1, len(lines)):
-            line = lines[i].strip()
-            if line and len(line) > 5:
-                # Если встречаем пустую строку после блока расписания - останавливаемся
-                if i > start_index + 20:  # Ограничиваем поиск 20 строками после заголовка
-                    break
-                session_lines.append(line)
+        session_text = match.group(1).strip()
         
-        # Объединяем строки в один текст для парсинга
-        session_text = '\n'.join(session_lines)
+        # Удаляем лишние пробелы и переносы
+        session_text = re.sub(r'\s+', ' ', session_text)
         
-        # Паттерны для парсинга
-        # Ищем строки вида: "Предмет (Тип) Дата, Время Аудитория, Преподаватель"
+        # Парсим экзамены - каждый экзамен начинается с предмета и типа в скобках
         # Пример: "Современные информационные технологии (Консультация) 13.01.2026, с 09:00 до 10:30 2/202, Верзилина Ольга Александровна"
         
-        # Разделяем по преподавателям (русские ФИО с заглавных букв)
-        patterns = [
-            # Паттерн 1: Разделение по ФИО преподавателя
-            r'(.+?)\s*(\d{2}\.\d{2}\.\d{4}),\s*(с \d{2}:\d{2} до \d{2}:\d{2})\s*([^,]+),\s*([А-Я][а-я]+ [А-Я][а-я]+ [А-Я][а-я]+)',
-            # Паттерн 2: Без запятой перед ФИО
-            r'(.+?)\s*(\d{2}\.\d{2}\.\d{4}),\s*(с \d{2}:\d{2} до \d{2}:\d{2})\s*([^,]+)\s*([А-Я][а-я]+ [А-Я][а-я]+ [А-Я][а-я]+)',
-        ]
+        # Разбиваем текст на отдельные экзамены
+        # Ищем шаблон: Предмет (Тип) Дата, Время Аудитория, Преподаватель
+        exam_pattern = r'([А-Яа-яЁё\s\-]+)\s*\((Консультация|Экзамен)\)\s*(\d{2}\.\d{2}\.\d{4}),\s*с (\d{2}:\d{2}) до (\d{2}:\d{2})\s*([^,]+),\s*([А-Я][а-я]+\s[А-Я][а-я]+\s[А-Я][а-я]+)'
         
         exams = []
+        matches = re.findall(exam_pattern, session_text)
         
-        # Сначала пробуем найти все совпадения по паттерну
-        for pattern in patterns:
-            matches = re.findall(pattern, session_text)
-            if matches:
-                for match in matches:
-                    subject_type = match[0].strip()
-                    date_str = match[1].strip()
-                    time_str = match[2].strip()
-                    room = match[3].strip()
-                    teacher = match[4].strip()
-                    
-                    # Разделяем предмет и тип
-                    subject = subject_type
-                    exam_type = ""
-                    
-                    # Ищем тип в скобках
-                    type_match = re.search(r'\((Консультация|Экзамен)\)', subject_type)
-                    if type_match:
-                        exam_type = type_match.group(1)
-                        subject = subject_type.replace(f'({exam_type})', '').strip()
-                    
-                    exams.append({
-                        'subject': subject,
-                        'type': exam_type,
-                        'date': date_str,
-                        'time': time_str,
-                        'room': room,
-                        'teacher': teacher
-                    })
-                break
+        for match in matches:
+            subject = match[0].strip()
+            exam_type = match[1].strip()
+            date_str = match[2].strip()
+            time_start = match[3].strip()
+            time_end = match[4].strip()
+            room = match[5].strip()
+            teacher = match[6].strip()
+            
+            time_str = f"с {time_start} до {time_end}"
+            
+            exams.append({
+                'subject': subject,
+                'type': exam_type,
+                'date': date_str,
+                'time': time_str,
+                'room': room,
+                'teacher': teacher
+            })
         
-        # Если не нашли по паттерну, пробуем другой подход
+        # Если не нашли по первому паттерну, пробуем альтернативный
         if not exams:
-            # Разбиваем текст по датам
-            date_pattern = r'\d{2}\.\d{2}\.\d{4}'
-            parts = re.split(f'({date_pattern})', session_text)
+            # Альтернативный паттерн без "с" и "до"
+            alt_pattern = r'([А-Яа-яЁё\s\-]+)\s*\((Консультация|Экзамен)\)\s*(\d{2}\.\d{2}\.\d{4}),\s*(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})\s*([^,]+),\s*([А-Я][а-я]+\s[А-Я][а-я]+\s[А-Я][а-я]+)'
+            matches = re.findall(alt_pattern, session_text)
+            
+            for match in matches:
+                subject = match[0].strip()
+                exam_type = match[1].strip()
+                date_str = match[2].strip()
+                time_start = match[3].strip()
+                time_end = match[4].strip()
+                room = match[5].strip()
+                teacher = match[6].strip()
+                
+                time_str = f"с {time_start} до {time_end}"
+                
+                exams.append({
+                    'subject': subject,
+                    'type': exam_type,
+                    'date': date_str,
+                    'time': time_str,
+                    'room': room,
+                    'teacher': teacher
+                })
+        
+        # Если все еще нет данных, пробуем более простой парсинг
+        if not exams:
+            # Разделяем по преподавателям (ФИО из 3 слов)
+            parts = re.split(r'([А-Я][а-я]+\s[А-Я][а-я]+\s[А-Я][а-я]+)', session_text)
             
             for i in range(1, len(parts), 2):
-                if i + 1 < len(parts):
-                    date_str = parts[i].strip()
-                    rest = parts[i + 1].strip()
+                if i < len(parts):
+                    teacher = parts[i].strip()
+                    exam_info = parts[i-1].strip() if i > 0 else ""
                     
-                    # Ищем время
-                    time_match = re.search(r'с \d{2}:\d{2} до \d{2}:\d{2}', rest)
-                    if time_match:
-                        time_str = time_match.group(0)
+                    # Ищем в exam_info предмет, тип, дату, время, аудиторию
+                    if exam_info:
+                        # Ищем дату
+                        date_match = re.search(r'(\d{2}\.\d{2}\.\d{4})', exam_info)
+                        date_str = date_match.group(1) if date_match else ""
                         
-                        # Разделяем остальную часть
-                        rest_parts = rest.split(time_str)
-                        if len(rest_parts) >= 2:
-                            subject_part = rest_parts[0].strip()
-                            after_time = rest_parts[1].strip()
-                            
-                            # Ищем аудиторию и преподавателя
-                            room_teacher_parts = after_time.split(',')
-                            room = room_teacher_parts[0].strip() if len(room_teacher_parts) > 0 else ""
-                            teacher = room_teacher_parts[1].strip() if len(room_teacher_parts) > 1 else ""
-                            
-                            # Разделяем предмет и тип
-                            subject = subject_part
+                        # Ищем время
+                        time_match = re.search(r'(\d{2}:\d{2})\s*[—-]\s*(\d{2}:\d{2})', exam_info)
+                        if time_match:
+                            time_str = f"с {time_match.group(1)} до {time_match.group(2)}"
+                        else:
+                            time_str = ""
+                        
+                        # Ищем аудиторию
+                        room_match = re.search(r'(\d+/\d+)', exam_info)
+                        room = room_match.group(1) if room_match else ""
+                        
+                        # Ищем предмет и тип
+                        subject_type_match = re.search(r'([А-Яа-яЁё\s\-]+)\s*\((Консультация|Экзамен)\)', exam_info)
+                        if subject_type_match:
+                            subject = subject_type_match.group(1).strip()
+                            exam_type = subject_type_match.group(2).strip()
+                        else:
+                            # Если не нашли в скобках, пробуем найти просто предмет
+                            subject_match = re.search(r'^([А-Яа-яЁё\s\-]+?)(?=\s*\d{2}\.\d{2}\.\d{4}|$)', exam_info)
+                            subject = subject_match.group(1).strip() if subject_match else exam_info
                             exam_type = ""
-                            
-                            type_match = re.search(r'\((Консультация|Экзамен)\)', subject_part)
-                            if type_match:
-                                exam_type = type_match.group(1)
-                                subject = subject_part.replace(f'({exam_type})', '').strip()
-                            
+                        
+                        if subject and date_str:
                             exams.append({
                                 'subject': subject,
                                 'type': exam_type,
@@ -311,6 +309,9 @@ def fetch_exam_schedule():
                                 'room': room,
                                 'teacher': teacher
                             })
+        
+        # Сортируем по дате
+        exams.sort(key=lambda x: datetime.strptime(x['date'], '%d.%m.%Y') if x['date'] else datetime.max)
         
         logger.info(f"Найдено {len(exams)} записей о сессии")
         return exams
@@ -344,32 +345,31 @@ async def exam_command(message: types.Message):
             )
             return
         
-        # Сортируем по дате
-        exam_schedule.sort(key=lambda x: datetime.strptime(x['date'], '%d.%m.%Y'))
-        
         text = "<b>📅 Расписание сессии:</b>\n\n"
         
         for exam in exam_schedule:
             # Определяем эмодзи по типу
             if exam['type'] == "Консультация":
                 emoji = "💬"
-                type_text = "Консультация"
             elif exam['type'] == "Экзамен":
                 emoji = "📝"
-                type_text = "Экзамен"
             else:
                 emoji = "📚"
-                type_text = exam['type'] if exam['type'] else "Занятие"
             
             text += f"{emoji} <b>{exam['subject']}</b>\n"
-            text += f"   🏷️ <i>{type_text}</i>\n"
-            text += f"   📅 {exam['date']}\n"
-            text += f"   ⏰ {exam['time']}\n"
-            text += f"   🏫 {exam['room']}\n"
-            text += f"   👨‍🏫 {exam['teacher']}\n\n"
+            if exam['type']:
+                text += f"   🏷️ {exam['type']}\n"
+            if exam['date']:
+                text += f"   📅 {exam['date']}\n"
+            if exam['time']:
+                text += f"   ⏰ {exam['time']}\n"
+            if exam['room']:
+                text += f"   🏫 {exam['room']}\n"
+            if exam['teacher']:
+                text += f"   👨‍🏫 {exam['teacher']}\n"
+            text += "\n"
         
-        text += f"\n<i>Загружено: {datetime.now().strftime('%d.%m.%Y %H:%M')}</i>"
-        
+        # Убрана строка с "Загружено"
         await message.reply(text, parse_mode="HTML")
         
     except Exception as e:
@@ -538,8 +538,6 @@ if __name__ == "__main__":
         logger.error(f"❌ Критическая ошибка запуска бота: {e}", exc_info=True)
         print(f"❌ Ошибка: {e}")
         sys.exit(1)
-
-
 
 
 
